@@ -33,9 +33,33 @@ KERNEL_NAME = "Logsumexp"
 
 @eg.module
 class Logsumexp(object):
+    def calc_avaible_nram_count(self):
+        return tcp.round_down((self.bp.nram_size - 30 * 1024) // 2, 128)
+
+    def calc_core_process_count(self, data_total_len: ty.int32, task_num: ty.int32, task_id: ty.int32):
+        one_core_count = data_total_len // task_num
+        remain = data_total_len % task_num
+        m_current_core_start = 0
+        m_current_core_end = 0
+        m_total_count_in_core = 0
+        if task_id < remain:
+            m_current_core_start = (one_core_count + 1) * task_id
+            m_current_core_end = (one_core_count + 1) * (task_id + 1) - 1
+            m_total_count_in_core = m_current_core_end - m_current_core_start + 1
+        else:
+            m_current_core_start = (one_core_count + 1) * \
+                remain + one_core_count * (task_id - remain)
+            m_current_core_end = (one_core_count + 1) * remain + \
+                one_core_count * (task_id - remain) + one_core_count - 1
+            m_total_count_in_core = m_current_core_end - m_current_core_start + 1
+
+        self.m_total_count_in_core = m_total_count_in_core
+        self.m_current_core_start = m_current_core_start
+        self.m_current_core_end = m_current_core_end
+
     def __init__(self, dtype: ty.string, dtype_size: ty.int32) -> None:
         self.dtype = dtype
-        self.dtype_size = dtype_size 
+        self.dtype_sz = dtype_size 
 
 
     def main(self, Gram_tensor: ty.handle,
@@ -60,8 +84,47 @@ class Logsumexp(object):
                 self.taskId = task_id
                 tcp.print("zouni")
 
+                gram_reshape_tensor = gram_tensor[:h * w].reshape([h, w])
 
+                nram_avable_size = self.calc_avaible_nram_count()
+                self.nram_process_count = nram_avable_size // self.dtype_sz
 
+                self.nram_calc_buffer = tcp.alloc_buffer(
+                    shape=(self.nram_process_count, 1),
+                    dtype=self.dtype,
+                    scope="nram")
+
+                self.m_buff = tcp.alloc_buffer(
+                    shape=(border_array_size * 2,),
+                    dtype= tcp.int32, scope="nram"
+                )
+'''
+
+                self.flat_nram = self.nram_calc_buffer[:self.nram_process_count].reshape([self.nram_process_count, ])
+
+                self.taskId = task_id
+                self.calc_core_process_count(h * w, task_num)
+                if dim_len > self.nram_process_count:
+                    self.calc1(gram_reshape_tensor, gram_border_buf_out,
+                               gram_border_idx_out, gram_buffer_out)
+                else:
+                    if (w * h) // task_num + 1 < dim_len:
+                        self.calc1(gram_reshape_tensor, gram_border_buf_out,
+                                   gram_border_idx_out, gram_buffer_out)
+                    else:
+                        self.calc2(gram_reshape_tensor, gram_border_buf_out,
+                                   gram_border_idx_out, gram_buffer_out)
+
+                tcp.sync_all()
+
+        def calc2(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle):
+            return 222
+
+        def calc1(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle): 
+            once_loop_start = 0
+            return 111
+
+'''
 
 @tcp.register_mlu_op(DTYPES, TARGET_LIST, KERNEL_NAME)
 def build_add(dtype=None, target=None):
