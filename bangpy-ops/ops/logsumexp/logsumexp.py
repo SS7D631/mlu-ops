@@ -61,6 +61,11 @@ class Logsumexp(object):
         self.dtype = dtype
         self.dtype_sz = dtype_size 
 
+    def calc1(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle):
+        return 12
+
+    def calc2(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle):
+        return 12
 
     def main(self, Gram_tensor: ty.handle,
                     dim_len: ty.int32, h: ty.int32, w: ty.int32,
@@ -96,14 +101,15 @@ class Logsumexp(object):
 
                 self.m_buff = tcp.alloc_buffer(
                     shape=(border_array_size * 2,),
-                    dtype= tcp.int32, scope="nram"
+                    dtype= 'int32', scope="nram"
                 )
-'''
+
 
                 self.flat_nram = self.nram_calc_buffer[:self.nram_process_count].reshape([self.nram_process_count, ])
 
+                self.dim_len = dim_len
                 self.taskId = task_id
-                self.calc_core_process_count(h * w, task_num)
+                self.calc_core_process_count(h * w, task_num, task_id)
                 if dim_len > self.nram_process_count:
                     self.calc1(gram_reshape_tensor, gram_border_buf_out,
                                gram_border_idx_out, gram_buffer_out)
@@ -114,17 +120,12 @@ class Logsumexp(object):
                     else:
                         self.calc2(gram_reshape_tensor, gram_border_buf_out,
                                    gram_border_idx_out, gram_buffer_out)
-
                 tcp.sync_all()
 
-        def calc2(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle):
-            return 222
 
-        def calc1(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle): 
-            once_loop_start = 0
-            return 111
 
-'''
+
+
 
 @tcp.register_mlu_op(DTYPES, TARGET_LIST, KERNEL_NAME)
 def build_add(dtype=None, target=None):
