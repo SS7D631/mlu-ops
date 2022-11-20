@@ -59,13 +59,32 @@ class Logsumexp(object):
 
     def __init__(self, dtype: ty.string, dtype_size: ty.int32) -> None:
         self.dtype = dtype
-        self.dtype_sz = dtype_size 
+        self.dtype_sz = dtype_size
+        self.m_value = 0.0
+        self._oper_count = 0
+        self.m_size = 0
+        self.m_buff = None
+
+    def add(self, index: ty.int32):
+        m_buff[self.m_size] = index
+        self.m_size += 1
+
+    def is_in(self, index: ty.int32):
+        ret = 0
+        for i in range(self.m_size):
+            if index == self.m_buff[i]:
+                ret = 1
+        return ret
 
     def calc1(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle):
         return 12
 
     def calc2(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle):
         return 12
+
+
+    def calc_value(self, x: ty.double, y: ty.double):
+        return 0.0
 
     def main(self, Gram_tensor: ty.handle,
                     dim_len: ty.int32, h: ty.int32, w: ty.int32,
@@ -87,7 +106,6 @@ class Logsumexp(object):
                 task_num = tgt.cluster_num * tgt.core_num
                 task_id = tgt.core_num * cluster_id + core_id
                 self.taskId = task_id
-                tcp.print("zouni")
 
                 gram_reshape_tensor = gram_tensor[:h * w].reshape([h, w])
 
@@ -122,6 +140,33 @@ class Logsumexp(object):
                                    gram_border_idx_out, gram_buffer_out)
                 tcp.sync_all()
 
+                self.m_buff = tcp.alloc_buffer(
+                        shape = (border_array_size * 2,),
+                        dtype = 'int32', scope="nram"
+                    )
+
+                if task_id == 0:
+                    for i in range(border_array_size):
+                        index1 = gram_border_idx_out[2 * i]
+                        index2 = gram_border_idx_out[2 * i + 1]
+                        norm_value1 = gram_border_buf_out[2 * i]
+                        norm_value2 = gram_border_buf_out[2 * i + 1]
+
+                        if index1 >= 0:
+                            if self.is_in(index1) == 0:
+                                gram_buffer_out[index1] = norm_value1
+                                self.add(index1)
+                            else:
+                                gram_buffer_out[index1] = \
+                                    self.calc_value(gram_buffer_out[index1], norm_value1)
+
+                        if index2 >= 0:
+                            if self.is_in(index2) == 0:
+                                gram_buffer_out[index2] = norm_value2
+                                self.add(index2)
+                            else:
+                                gram_buffer_out[index2] = \
+                                    self.calc_value(gram_buffer_out[index2], norm_value2)
 
 
 
