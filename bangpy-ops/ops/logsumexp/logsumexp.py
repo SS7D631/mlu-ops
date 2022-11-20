@@ -66,15 +66,14 @@ class Logsumexp(object):
         self.m_buff = None
 
     def add(self, index: ty.int32):
-        m_buff[self.m_size] = index
+        self.m_buff[self.m_size] = index
         self.m_size += 1
 
-    def is_in(self, index: ty.int32):
-        ret = 0
+    def check_in(self, index: ty.int32):
         for i in range(self.m_size):
             if index == self.m_buff[i]:
-                ret = 1
-        return ret
+                return 1
+        return 0
 
     def calc1(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle):
         return 12
@@ -83,7 +82,8 @@ class Logsumexp(object):
         return 12
 
 
-    def calc_value(self, x: ty.double, y: ty.double):
+
+    def calc_value(self, x, y):
         return 0.0
 
     def main(self, Gram_tensor: ty.handle,
@@ -145,6 +145,7 @@ class Logsumexp(object):
                         dtype = 'int32', scope="nram"
                     )
 
+                ret2 = 0.0
                 if task_id == 0:
                     for i in range(border_array_size):
                         index1 = gram_border_idx_out[2 * i]
@@ -153,20 +154,25 @@ class Logsumexp(object):
                         norm_value2 = gram_border_buf_out[2 * i + 1]
 
                         if index1 >= 0:
-                            if self.is_in(index1) == 0:
+                            chk_ret = self.check_in(index1)
+                            if chk_ret == 0:
                                 gram_buffer_out[index1] = norm_value1
                                 self.add(index1)
                             else:
-                                gram_buffer_out[index1] = \
-                                    self.calc_value(gram_buffer_out[index1], norm_value1)
+                                ret2 = self.calc_value(gram_buffer_out[index1], norm_value1)
+                                gram_buffer_out[index1] = ret2
+                                    
+                                    
 
                         if index2 >= 0:
-                            if self.is_in(index2) == 0:
+                            chk_ret = self.check_in(index2)
+                            if chk_ret == 0:
                                 gram_buffer_out[index2] = norm_value2
                                 self.add(index2)
                             else:
-                                gram_buffer_out[index2] = \
-                                    self.calc_value(gram_buffer_out[index2], norm_value2)
+                                ret2 = self.calc_value(gram_buffer_out[index2], norm_value2)
+                                gram_buffer_out[index2] = ret2
+                                    
 
 
 
