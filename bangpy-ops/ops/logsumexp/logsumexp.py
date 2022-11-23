@@ -60,10 +60,79 @@ class Logsumexp(object):
     def __init__(self, dtype: ty.string, dtype_size: ty.int32) -> None:
         self.dtype = dtype
         self.dtype_sz = dtype_size
-        self.m_value = 0.0
-        self._oper_count = 0
+
+        self.m_norm_value = 0.0
+        self._norm_oper_count = 0
+        self.m_lc_value = 0.0
+        self._lc_oper_count = 0
+
         self.m_size = 0
         self.m_buff = None
+
+    def nm_reset(self):
+        self.m_norm_value = 0.0
+        self._norm_oper_count = 0
+
+    def lc_reset(self):
+        self.m_lc_value = 0.0
+        self._lc_oper_count = 0
+
+    def nm_add_buffer(self, buffer: ty.handle, start_index: ty.int32, end_index: ty.int32):
+        if self._norm_oper_count == 0:
+            self.m_norm_value = self.calc_buffer(buffer, start_index, end_index)
+        else:
+            ret_value = self.calc_buffer(buffer, start_index, end_index)
+            tmp_calc_value = self.m_norm_value
+            tmp_ret = self.calc_value(tmp_calc_value, ret_value)
+            self.m_norm_value = tmp_ret
+
+        self._norm_oper_count += 1
+        return self.m_value
+
+
+    def lc_add_buffer(self, buffer: ty.handle, start_index, end_index):
+        if self._lc_oper_count == 0:
+            self.m_lc_value = self.calc_buffer(buffer, start_index, end_index)
+        else:
+            ret_value = self.calc_buffer(buffer, start_index, end_index)
+            tmp_calc_value = self.m_lc_value
+            tmp_ret = self.calc_value(tmp_calc_value, ret_value)
+            self.m_lc_value = tmp_ret
+
+        self._lc_oper_count += 1
+        return self.m_lc_value
+
+
+
+
+    def calc_buffer(self, buffer: ty.handle, start_index: ty.int32, end_index: ty.int32):
+        natural_base = 2.7182818284590452353602874713526624977572470936999
+        const_one = 1
+        max_threshold_valu = 88.722008965395851698332450562653
+        min_threshold_valu = -87.332719095296162600686375692197
+        data_length = end_index - start_index
+        sub_value = 0.0
+        sum_value = buffer[start_index]
+        #with self.bp.for_range(0, data_length - 1) as i:
+        for i in range(data_length - 1):
+            sub_value = sum_value - buffer[i + 1]
+            if sub_value <= max_threshold_valu and sub_value >= min_threshold_valu:
+                sum_value = tcp.scalar_pow(natural_base, sub_value) + const_one
+                sum_value = tcp.scalar_log(sum_value) / self.bp.scalar_log(natural_base)
+                sum_value = sum_value + buffer[i + 1]
+            else:
+                if sub_value < min_threshold_valu:
+                    sum_value = buffer[i + 1]
+        return sum_value
+
+
+
+
+
+
+
+
+
 
     def add(self, index: ty.int32):
         self.m_buff[self.m_size] = index
@@ -75,16 +144,89 @@ class Logsumexp(object):
                 return 1
         return 0
 
+    def get_calc_loop_count(self):
+        return (self.m_total_count_in_core + self.nram_process_count - 1) // self.nram_process_count
+
+    def copy_from_2d_tensor(self, dst: ty.handle, offset_dst: ty.int32, src: ty.handle, offset_src: ty.int32, dim_len: ty.int32, width: ty.int32, cp_len: ty.int32):
+        big_row = offset_src // (width * dim_len)
+
+        m = offset_src % dim_len + big_row * dim_len
+
+        big_n = offset_src // dim_len
+        n = big_n % width
+
+        if offset_dst != offset_dst + cp_len // 2:
+            tcp.memcpy(dst[offset_dst:offset_dst + cp_len // 2, 0:1],
+                           src[m:m + cp_len // 2, n:n + 1])
+
+        if offset_dst + cp_len // 2 != offset_dst + cp_len:
+            tcp.memcpy(dst[offset_dst + cp_len // 2:offset_dst + cp_len, 0:1],
+                           src[m + cp_len // 2:m + cp_len, n:n + 1])
+
     def calc1(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle):
-        return 12
+        once_loop_start = 0
+        norm_offset = self.m_current_core_start % self.dim_len
+        
+        #norm_value = LogSumCalcer(self.bp, self.dtype)
+
+        self.calc_size = self.nram_process_count
+        once_norm_ok = 0
+        cp_data_len = 0
+        loop_count = self.get_calc_loop_count()
+        for i in range(loop_count):
+            once_loop_start = self.m_current_core_start + self.nram_process_count * i
+            if i == loop_count - 1:
+                self.calc_size = self.m_total_count_in_core % self.nram_process_count
+                if self.calc_size == 0:
+                    self.calc_size = self.nram_process_count
+
+            norm_offset = once_loop_start % self.dim_len
+            expect_cp_len = self.dim_len - norm_offset
+
+            if expect_cp_len > self.calc_size:
+                expect_cp_len = self.calc_size
+                self.copy_from_2d_tensor(self.nram_calc_buffer, 0, gram_tensor, once_loop_start, self.dim_len, self.w, expect_cp_len)
+                cp_data_len = cp_data_len + expect_cp_len
+                
+                #norm_value.add_buffer(self.flat_nram, 0, expect_cp_len)
+                
+                '''
+                if i == loop_count - 1:
+                    index = get_norm_index(once_loop_start + expect_cp_len, self.para.dim_len)
+                    with self.bp.if_scope(once_norm_ok == 0):
+                        border_outputs[self.bp.taskId * 2] = \
+                            norm_value.m_value
+                        idx_outputs[self.bp.taskId * 2] = index
+                    with self.bp.else_scope():
+                        border_outputs[self.bp.taskId * 2 + 1] = norm_value.m_value
+                        idx_outputs[self.bp.taskId * 2 + 1] = index
+                        '''
+
+
+
 
     def calc2(self, gram_tensor: ty.handle, border_outputs: ty.handle, idx_outputs: ty.handle, outputs: ty.handle):
         return 12
 
-
-
     def calc_value(self, x, y):
-        return 0.0
+        natural_base = 2.718281
+        max_threshold_valu = 88.72200
+        min_threshold_valu = -87.33271
+        const_one = 1
+        scalar_res = y - x
+        if scalar_res <= max_threshold_valu and scalar_res >= min_threshold_valu:
+            scalar_res = tcp.scalar_pow(natural_base, scalar_res)
+            scalar_res = scalar_res + const_one
+            scalar_res = tcp.scalar_log(scalar_res) / tcp.scalar_log(natural_base)
+            scalar_res = scalar_res + x
+        else:
+            if scalar_res > max_threshold_valu:
+                scalar_res = y
+            else:
+                scalar_res = x
+
+        return scalar_res
+
 
     def main(self, Gram_tensor: ty.handle,
                     dim_len: ty.int32, h: ty.int32, w: ty.int32,
@@ -93,6 +235,7 @@ class Logsumexp(object):
                     ) -> None:
         tgt = tcp.target()
         self.bp = tgt
+        self.w = w
 
         gram_tensor = tcp.match_buffer(Gram_tensor, [h * w], dtype=self.dtype)
 
@@ -121,7 +264,6 @@ class Logsumexp(object):
                     shape=(border_array_size * 2,),
                     dtype= 'int32', scope="nram"
                 )
-
 
                 self.flat_nram = self.nram_calc_buffer[:self.nram_process_count].reshape([self.nram_process_count, ])
 
@@ -161,8 +303,6 @@ class Logsumexp(object):
                             else:
                                 ret2 = self.calc_value(gram_buffer_out[index1], norm_value1)
                                 gram_buffer_out[index1] = ret2
-                                    
-                                    
 
                         if index2 >= 0:
                             chk_ret = self.check_in(index2)
